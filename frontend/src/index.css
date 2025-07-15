@@ -1,15 +1,14 @@
+@import "tailwindcss";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Minimal custom styles using CSS variables */
 :root {
   --black-olive: #d9d8d8;
   --raw-umber: #936639;
   --sage: #A4AC86;
 }
 
-/* Optional: basic link and button fallback styles */
 a {
   text-decoration: none;
 }
