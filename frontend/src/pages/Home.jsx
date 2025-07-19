@@ -27,7 +27,7 @@ export default function Home() {
           </div>
           <div className="bg-white p-6 rounded-xl shadow hover:shadow-lg transition">
             <h3 className="text-xl font-semibold mb-2">Modern Amenities</h3>
-            <p>Wi-Fi, power hookups, showers, and laundry all included.</p>
+            <p>Wi-Fi, full hookups, showers, and laundry all included.</p>
           </div>
           <div className="bg-white p-6 rounded-xl shadow hover:shadow-lg transition">
             <h3 className="text-xl font-semibold mb-2">Pet Friendly</h3>
