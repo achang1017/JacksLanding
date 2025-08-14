@@ -1,30 +1,60 @@
-# Ignore environment variable files
-.env
-frontend/.env
-backend/.env
-
-# Ignore node dependencies
-**/node_modules/
-
-# Ignore system files
-.DS_Store
-Thumbs.db
-
-# Ignore log files
+# Logs
+logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Ignore build output (if generated)
-dist/
-build/
+# Dependencies
+node_modules
+.pnp
+.pnp.js
 
-# Ignore IDE/editor settings
-.vscode/
-.idea/
-*.swp
+# Testing
+coverage
+*.lcov
+.nyc_output
 
-# Ignore temporary files
+# Production builds
+dist
+dist-ssr
+build
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Temporary files
 *.tmp
-*.bak
+*.temp
+.cache
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Stripe CLI
+stripe.exe
+stripe
+
+# Supabase
+supabase/.branches
+supabase/.temp
