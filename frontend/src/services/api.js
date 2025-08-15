@@ -42,20 +42,13 @@ api.interceptors.response.use(
 const apiService = {
   // Lots
   lots: {
-    getAll: (params) => api.get('/lots', { params }),
-    getAvailability: (checkIn, checkOut) => 
-      api.get('/lots/availability', { params: { check_in: checkIn, check_out: checkOut } }),
+    getAll: () => api.get('/lots'),
     getOne: (id) => api.get(`/lots/${id}`),
-    create: (data) => api.post('/lots', data),
-    update: (id, data) => api.put(`/lots/${id}`, data),
-    delete: (id) => api.delete(`/lots/${id}`),
   },
 
   // Reservations
   reservations: {
-    getMine: (params) => api.get('/reservations/my-reservations', { params }),
-    getAll: (params) => api.get('/reservations', { params }),
-    getOne: (id) => api.get(`/reservations/${id}`),
+    getMine: () => api.get('/reservations/my-reservations'),
     create: (data) => api.post('/reservations', data),
     updateStatus: (id, status) => api.patch(`/reservations/${id}/status`, { status }),
     cancel: (id) => api.delete(`/reservations/${id}`),
@@ -63,63 +56,18 @@ const apiService = {
 
   // Charges
   charges: {
-    getMine: (params) => api.get('/charges/my-charges', { params }),
-    getAll: (params) => api.get('/charges', { params }),
-    getOne: (id) => api.get(`/charges/${id}`),
-    create: (data) => api.post('/charges', data),
-    createBulkMonthly: (month, year) => api.post('/charges/bulk-monthly', { month, year }),
-    update: (id, data) => api.put(`/charges/${id}`, data),
-    markPaid: (id, paymentMethod, notes) => 
-      api.patch(`/charges/${id}/mark-paid`, { payment_method: paymentMethod, notes }),
-    delete: (id) => api.delete(`/charges/${id}`),
-  },
-
-  // Payments
-  payments: {
-    getMine: (params) => api.get('/payments/my-payments', { params }),
-    getAll: (params) => api.get('/payments', { params }),
-    getOne: (id) => api.get(`/payments/${id}`),
-    create: (data) => api.post('/payments', data),
+    getMine: () => api.get('/charges/my-charges'),
   },
 
   // Inquiries
   inquiries: {
     submit: (data) => api.post('/inquiries', data),
-    getAll: (params) => api.get('/inquiries', { params }),
-    getOne: (id) => api.get(`/inquiries/${id}`),
-    respond: (id, responseNotes) => api.patch(`/inquiries/${id}/respond`, { response_notes: responseNotes }),
-    delete: (id) => api.delete(`/inquiries/${id}`),
   },
 
-  // Admin
-  admin: {
-    // Dashboard stats
-    getStats: () => api.get('/admin/stats'),
-    
-    // User management
-    getUsers: (params) => api.get('/admin/users', { params }),
-    getUser: (id) => api.get(`/admin/users/${id}`),
-    updateUserRole: (id, role) => api.patch(`/admin/users/${id}/role`, { role }),
-    
-    // Reports
-    getRevenueReport: (startDate, endDate) => 
-      api.get('/admin/reports/revenue', { params: { start_date: startDate, end_date: endDate } }),
-    getOccupancyReport: (month, year) => 
-      api.get('/admin/reports/occupancy', { params: { month, year } }),
-  },
-
-  // Stripe
-  stripe: {
-    createCheckoutSession: (data) => api.post('/stripe/create-checkout-session', data),
-    createPaymentIntent: (data) => api.post('/stripe/create-payment-intent', data),
-    confirmPayment: (paymentIntentId) => api.post('/stripe/confirm-payment', { payment_intent_id: paymentIntentId }),
-  },
-
-  // Auth (additional endpoints if needed)
+  // Auth
   auth: {
+    getProfile: () => api.get('/auth/profile'),
     updateProfile: (data) => api.put('/auth/profile', data),
-    changePassword: (currentPassword, newPassword) => 
-      api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }),
   },
 };
 

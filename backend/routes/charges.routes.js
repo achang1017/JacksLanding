@@ -1,203 +1,140 @@
 // backend/routes/charges.routes.js
 import express from 'express';
 import { supabaseAdmin } from '../services/supabase.js';
-import { createInvoice } from '../services/stripe.js';
-import { requireAdmin, requireResident } from '../middleware/auth.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
+import { authenticateUser, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get current user's charges (residents)
-router.get('/my-charges', requireResident, asyncHandler(async (req, res) => {
-  const userId = req.userId;
-  const { payment_status, from_date, to_date } = req.query;
-  
-  let query = supabaseAdmin
-    .from('charges')
-    .select(`
-      *,
-      lot:lots(
-        lot_number
-      )
-    `)
-    .eq('resident_id', userId);
-  
-  if (payment_status) {
-    query = query.eq('payment_status', payment_status);
-  }
-  
-  if (from_date) {
-    query = query.gte('created_at', from_date);
-  }
-  
-  if (to_date) {
-    query = query.lte('created_at', to_date);
-  }
-  
-  const { data, error } = await query.order('created_at', { ascending: false });
-  
-  if (error) throw error;
-  
-  // Calculate totals
-  const totals = {
-    total: 0,
-    paid: 0,
-    pending: 0,
-    overdue: 0
-  };
-  
-  data.forEach(charge => {
-    totals.total += parseFloat(charge.amount);
-    if (charge.payment_status === 'paid') {
-      totals.paid += parseFloat(charge.amount);
-    } else if (charge.payment_status === 'pending') {
-      totals.pending += parseFloat(charge.amount);
-    } else if (charge.payment_status === 'overdue') {
-      totals.overdue += parseFloat(charge.amount);
-    }
-  });
-  
-  res.json({
-    success: true,
-    data,
-    totals,
-    count: data.length
-  });
-}));
-
-// Get all charges (admin only)
-router.get('/', requireAdmin, asyncHandler(async (req, res) => {
-  const { resident_id, payment_status, charge_type, from_date, to_date } = req.query;
-  
-  let query = supabaseAdmin
-    .from('charges')
-    .select(`
-      *,
-      resident:profiles(
-        full_name,
-        email,
-        lot_number
-      ),
-      lot:lots(
-        lot_number
-      )
-    `);
-  
-  if (resident_id) {
-    query = query.eq('resident_id', resident_id);
-  }
-  
-  if (payment_status) {
-    query = query.eq('payment_status', payment_status);
-  }
-  
-  if (charge_type) {
-    query = query.eq('charge_type', charge_type);
-  }
-  
-  if (from_date) {
-    query = query.gte('created_at', from_date);
-  }
-  
-  if (to_date) {
-    query = query.lte('created_at', to_date);
-  }
-  
-  const { data, error } = await query.order('created_at', { ascending: false });
-  
-  if (error) throw error;
-  
-  res.json({
-    success: true,
-    data,
-    count: data.length
-  });
-}));
-
-// Get single charge
-router.get('/:id', asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const userId = req.userId;
-  const isUserAdmin = await requireAdmin(userId);
-  
-  let query = supabaseAdmin
-    .from('charges')
-    .select(`
-      *,
-      resident:profiles(
-        full_name,
-        email,
-        lot_number
-      ),
-      lot:lots(
-        lot_number
-      ),
-      payments(
-        id,
-        amount,
-        payment_method,
-        created_at
-      )
-    `)
-    .eq('id', id);
-  
-  // Non-admins can only view their own charges
-  if (!isUserAdmin) {
-    query = query.eq('resident_id', userId);
-  }
-  
-  const { data, error } = await query.single();
-  
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return res.status(404).json({
-        error: 'Not Found',
-        message: 'Charge not found'
+// GET - Get my charges (residents only)
+router.get('/my-charges', authenticateUser, async (req, res) => {
+  try {
+    console.log(`📍 GET /api/charges/my-charges - User ${req.user.email}`);
+    
+    // Check if user is a resident
+    if (!req.isResident && !req.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Only residents can view charges'
       });
     }
-    throw error;
-  }
-  
-  res.json({
-    success: true,
-    data
-  });
-}));
-
-// Create new charge (admin only)
-router.post('/', requireAdmin, asyncHandler(async (req, res) => {
-  const {
-    resident_id,
-    lot_id,
-    charge_type,
-    description,
-    amount,
-    due_date,
-    billing_period_start,
-    billing_period_end
-  } = req.body;
-  
-  // Validate required fields
-  if (!resident_id || !charge_type || !amount) {
-    return res.status(400).json({
-      error: 'Bad Request',
-      message: 'resident_id, charge_type, and amount are required'
+    
+    const { payment_status } = req.query;
+    
+    let query = supabaseAdmin
+      .from('charges')
+      .select(`
+        *,
+        lot:lots(
+          lot_number
+        )
+      `)
+      .eq('resident_id', req.userId);
+    
+    if (payment_status) {
+      query = query.eq('payment_status', payment_status);
+    }
+    
+    const { data, error } = await query.order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    // Calculate totals
+    const totals = {
+      total: 0,
+      paid: 0,
+      pending: 0,
+      overdue: 0
+    };
+    
+    data.forEach(charge => {
+      const amount = parseFloat(charge.amount) || 0;
+      totals.total += amount;
+      
+      if (charge.payment_status === 'paid') {
+        totals.paid += amount;
+      } else if (charge.payment_status === 'pending') {
+        // Check if overdue
+        if (charge.due_date && new Date(charge.due_date) < new Date()) {
+          totals.overdue += amount;
+        } else {
+          totals.pending += amount;
+        }
+      }
+    });
+    
+    console.log(`✅ Found ${data.length} charges for resident`);
+    
+    res.json({
+      success: true,
+      data,
+      totals,
+      count: data.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching charges:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch charges',
+      message: error.message
     });
   }
-  
-  // Get resident's Stripe customer ID
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from('profiles')
-    .select('stripe_customer_id, email, full_name')
-    .eq('id', resident_id)
-    .single();
-  
-  if (profileError) throw profileError;
-  
-  // Create charge in database
-  const { data: charge, error: chargeError } = await supabaseAdmin
-    .from('charges')
-    .insert({
+});
+
+// GET - Get all charges (admin only)
+router.get('/', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    console.log('📍 GET /api/charges - Admin fetching all charges');
+    
+    const { resident_id, payment_status, charge_type } = req.query;
+    
+    let query = supabaseAdmin
+      .from('charges')
+      .select(`
+        *,
+        resident:profiles(
+          full_name,
+          email,
+          lot_number
+        ),
+        lot:lots(
+          lot_number
+        )
+      `);
+    
+    if (resident_id) query = query.eq('resident_id', resident_id);
+    if (payment_status) query = query.eq('payment_status', payment_status);
+    if (charge_type) query = query.eq('charge_type', charge_type);
+    
+    const { data, error } = await query.order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    console.log(`✅ Found ${data.length} total charges`);
+    
+    res.json({
+      success: true,
+      data,
+      count: data.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching charges:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch charges',
+      message: error.message
+    });
+  }
+});
+
+// POST - Create new charge (admin only)
+router.post('/', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    console.log('📍 POST /api/charges - Admin creating new charge');
+    
+    const {
       resident_id,
       lot_id,
       charge_type,
@@ -205,225 +142,248 @@ router.post('/', requireAdmin, asyncHandler(async (req, res) => {
       amount,
       due_date,
       billing_period_start,
-      billing_period_end,
-      payment_status: 'pending'
-    })
-    .select()
-    .single();
-  
-  if (chargeError) throw chargeError;
-  
-  // Create Stripe invoice if customer exists
-  if (profile.stripe_customer_id && due_date) {
-    try {
-      const invoice = await createInvoice(
-        profile.stripe_customer_id,
-        [{
-          amount,
-          description: `${charge_type}: ${description || ''}`
-        }],
-        new Date(due_date)
-      );
-      
-      // Update charge with Stripe invoice ID
-      await supabaseAdmin
-        .from('charges')
-        .update({ stripe_invoice_id: invoice.id })
-        .eq('id', charge.id);
-      
-      charge.stripe_invoice_id = invoice.id;
-    } catch (stripeError) {
-      console.error('Error creating Stripe invoice:', stripeError);
-    }
-  }
-  
-  res.status(201).json({
-    success: true,
-    data: charge,
-    message: 'Charge created successfully'
-  });
-}));
-
-// Create bulk monthly charges (admin only)
-router.post('/bulk-monthly', requireAdmin, asyncHandler(async (req, res) => {
-  const { month, year } = req.body;
-  
-  if (!month || !year) {
-    return res.status(400).json({
-      error: 'Bad Request',
-      message: 'month and year are required'
-    });
-  }
-  
-  // Get all residents with their lots
-  const { data: residents, error: residentsError } = await supabaseAdmin
-    .from('profiles')
-    .select(`
-      id,
-      email,
-      full_name,
-      lot_number,
-      stripe_customer_id
-    `)
-    .eq('role', 'resident')
-    .not('lot_number', 'is', null);
-  
-  if (residentsError) throw residentsError;
-  
-  // Get lot information
-  const { data: lots, error: lotsError } = await supabaseAdmin
-    .from('lots')
-    .select('id, lot_number, monthly_rate');
-  
-  if (lotsError) throw lotsError;
-  
-  const lotMap = new Map(lots.map(lot => [lot.lot_number, lot]));
-  
-  // Create charges for each resident
-  const charges = [];
-  const billingPeriodStart = new Date(year, month - 1, 1);
-  const billingPeriodEnd = new Date(year, month, 0);
-  const dueDate = new Date(year, month - 1, 5); // Due on the 5th
-  
-  for (const resident of residents) {
-    const lot = lotMap.get(resident.lot_number);
+      billing_period_end
+    } = req.body;
     
-    if (lot && lot.monthly_rate) {
-      const chargeData = {
-        resident_id: resident.id,
-        lot_id: lot.id,
-        charge_type: 'rent',
-        description: `Monthly rent for ${resident.lot_number} - ${month}/${year}`,
-        amount: lot.monthly_rate,
-        due_date: dueDate.toISOString(),
-        billing_period_start: billingPeriodStart.toISOString(),
-        billing_period_end: billingPeriodEnd.toISOString(),
+    // Validate required fields
+    if (!resident_id || !charge_type || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'resident_id, charge_type, and amount are required'
+      });
+    }
+    
+    // Validate charge type
+    const validTypes = ['rent', 'electricity', 'water', 'sewer', 'wifi', 'late_fee', 'other'];
+    if (!validTypes.includes(charge_type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid charge_type. Must be one of: ${validTypes.join(', ')}`
+      });
+    }
+    
+    // Verify resident exists
+    const { data: resident, error: residentError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, full_name, email')
+      .eq('id', resident_id)
+      .single();
+    
+    if (residentError || !resident) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'Resident not found'
+      });
+    }
+    
+    // Create charge
+    const { data, error } = await supabaseAdmin
+      .from('charges')
+      .insert({
+        resident_id,
+        lot_id: lot_id || null,
+        charge_type,
+        description: description || `${charge_type} charge`,
+        amount,
+        due_date: due_date || null,
+        billing_period_start: billing_period_start || null,
+        billing_period_end: billing_period_end || null,
         payment_status: 'pending'
-      };
-      
-      charges.push(chargeData);
-    }
-  }
-  
-  // Insert all charges
-  const { data: createdCharges, error: insertError } = await supabaseAdmin
-    .from('charges')
-    .insert(charges)
-    .select();
-  
-  if (insertError) throw insertError;
-  
-  res.status(201).json({
-    success: true,
-    data: createdCharges,
-    count: createdCharges.length,
-    message: `Created ${createdCharges.length} monthly charges`
-  });
-}));
-
-// Update charge (admin only)
-router.put('/:id', requireAdmin, asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const updates = req.body;
-  
-  // Remove fields that shouldn't be updated
-  delete updates.id;
-  delete updates.created_at;
-  delete updates.updated_at;
-  
-  const { data, error } = await supabaseAdmin
-    .from('charges')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single();
-  
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return res.status(404).json({
-        error: 'Not Found',
-        message: 'Charge not found'
-      });
-    }
-    throw error;
-  }
-  
-  res.json({
-    success: true,
-    data,
-    message: 'Charge updated successfully'
-  });
-}));
-
-// Mark charge as paid (admin only)
-router.patch('/:id/mark-paid', requireAdmin, asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { payment_method, notes } = req.body;
-  
-  // Update charge status
-  const { data: charge, error: updateError } = await supabaseAdmin
-    .from('charges')
-    .update({
-      payment_status: 'paid',
-      paid_date: new Date().toISOString()
-    })
-    .eq('id', id)
-    .select()
-    .single();
-  
-  if (updateError) {
-    if (updateError.code === 'PGRST116') {
-      return res.status(404).json({
-        error: 'Not Found',
-        message: 'Charge not found'
-      });
-    }
-    throw updateError;
-  }
-  
-  // Create payment record
-  const { error: paymentError } = await supabaseAdmin
-    .from('payments')
-    .insert({
-      user_id: charge.resident_id,
-      charge_id: id,
-      amount: charge.amount,
-      payment_method: payment_method || 'manual',
-      notes
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    console.log(`✅ Charge created for resident ${resident.email}: $${amount}`);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Charge created successfully',
+      data
     });
-  
-  if (paymentError) throw paymentError;
-  
-  res.json({
-    success: true,
-    data: charge,
-    message: 'Charge marked as paid'
-  });
-}));
+    
+  } catch (error) {
+    console.error('❌ Error creating charge:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create charge',
+      message: error.message
+    });
+  }
+});
 
-// Delete charge (admin only)
-router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  
-  const { error } = await supabaseAdmin
-    .from('charges')
-    .delete()
-    .eq('id', id);
-  
-  if (error) {
-    if (error.code === 'PGRST116') {
+// POST - Create monthly charges for all residents (admin only)
+router.post('/bulk-monthly', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    console.log('📍 POST /api/charges/bulk-monthly - Creating monthly charges');
+    
+    const { month, year } = req.body;
+    
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: 'month (1-12) and year are required'
+      });
+    }
+    
+    // Get all residents with lots
+    const { data: residents, error: resError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, full_name, lot_number')
+      .eq('role', 'resident')
+      .not('lot_number', 'is', null);
+    
+    if (resError) throw resError;
+    
+    if (!residents || residents.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No residents found with assigned lots',
+        count: 0
+      });
+    }
+    
+    // Get lot information
+    const { data: lots, error: lotsError } = await supabaseAdmin
+      .from('lots')
+      .select('id, lot_number, monthly_rate');
+    
+    if (lotsError) throw lotsError;
+    
+    // Create a map for quick lot lookup
+    const lotMap = new Map(lots.map(lot => [lot.lot_number, lot]));
+    
+    // Prepare charges
+    const charges = [];
+    const billingPeriodStart = new Date(year, month - 1, 1);
+    const billingPeriodEnd = new Date(year, month, 0);
+    const dueDate = new Date(year, month - 1, 5); // Due on the 5th
+    
+    for (const resident of residents) {
+      const lot = lotMap.get(resident.lot_number);
+      
+      if (lot && lot.monthly_rate) {
+        charges.push({
+          resident_id: resident.id,
+          lot_id: lot.id,
+          charge_type: 'rent',
+          description: `Monthly rent for Lot ${resident.lot_number} - ${month}/${year}`,
+          amount: lot.monthly_rate,
+          due_date: dueDate.toISOString().split('T')[0],
+          billing_period_start: billingPeriodStart.toISOString().split('T')[0],
+          billing_period_end: billingPeriodEnd.toISOString().split('T')[0],
+          payment_status: 'pending'
+        });
+      }
+    }
+    
+    if (charges.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No charges to create',
+        count: 0
+      });
+    }
+    
+    // Insert all charges
+    const { data: createdCharges, error: insertError } = await supabaseAdmin
+      .from('charges')
+      .insert(charges)
+      .select();
+    
+    if (insertError) throw insertError;
+    
+    console.log(`✅ Created ${createdCharges.length} monthly charges`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Created ${createdCharges.length} monthly charges for ${month}/${year}`,
+      data: createdCharges,
+      count: createdCharges.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating bulk charges:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bulk charges',
+      message: error.message
+    });
+  }
+});
+
+// PATCH - Mark charge as paid (admin only)
+router.patch('/:id/mark-paid', authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { payment_method = 'cash', notes } = req.body;
+    
+    console.log(`📍 PATCH /api/charges/${id}/mark-paid - Marking as paid`);
+    
+    // Get the charge
+    const { data: charge, error: fetchError } = await supabaseAdmin
+      .from('charges')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !charge) {
       return res.status(404).json({
+        success: false,
         error: 'Not Found',
         message: 'Charge not found'
       });
     }
-    throw error;
+    
+    // Update charge status
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('charges')
+      .update({
+        payment_status: 'paid',
+        paid_date: new Date().toISOString().split('T')[0]
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (updateError) throw updateError;
+    
+    // Create payment record
+    const { error: paymentError } = await supabaseAdmin
+      .from('payments')
+      .insert({
+        user_id: charge.resident_id,
+        charge_id: id,
+        amount: charge.amount,
+        payment_method,
+        notes: notes || null
+      });
+    
+    if (paymentError) {
+      console.error('Warning: Payment record creation failed:', paymentError);
+    }
+    
+    console.log(`✅ Charge marked as paid: $${charge.amount}`);
+    
+    res.json({
+      success: true,
+      message: 'Charge marked as paid',
+      data: updated
+    });
+    
+  } catch (error) {
+    console.error('❌ Error marking charge as paid:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update charge',
+      message: error.message
+    });
   }
-  
-  res.json({
-    success: true,
-    message: 'Charge deleted successfully'
-  });
-}));
+});
 
 export default router;
